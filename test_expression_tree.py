@@ -94,6 +94,7 @@ def test_trace_visualization() -> None:
     evaluator = Evaluator(env)
     result = evaluator.evaluate(node)
     dot = to_dot(node, evaluator.trace)
+    assert result == 3.0
     assert "1.0" in dot
     assert "2.0" in dot
     assert "3.0" in dot

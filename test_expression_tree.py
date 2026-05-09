@@ -23,7 +23,7 @@ def test_arg_type_decorator() -> None:
 
     assert foo("ok") == "ok"
     with pytest.raises(TypeError):
-        foo(123)  # type: ignore[arg-type]
+        foo(123)
 
 
 def test_tokenizer() -> None:

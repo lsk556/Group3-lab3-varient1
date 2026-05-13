@@ -14,32 +14,39 @@ logger = logging.getLogger("expr")
 # ---------- AOP decorators ----------
 def type_check(pos: int, expected_type: type) -> Callable:
     """Decorator to check argument type at given position."""
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             if len(args) > pos and args[pos] is not None:
                 if not isinstance(args[pos], expected_type):
-                    error_msg = (f"{func.__name__} arg {pos} expects "
-                                 f"{expected_type.__name__}, got {type(args[pos]).__name__}")
+                    error_msg = (
+                        f"{func.__name__} arg {pos} expects "
+                        f"{expected_type.__name__}, got {type(args[pos]).__name__}"
+                    )
                     logger.error(error_msg)
                     raise TypeError(error_msg)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
-def range_check(pos: int, min_val: Optional[float] = None, max_val: Optional[float] = None) -> Callable:
+def range_check(
+    pos: int, min_val: Optional[float] = None, max_val: Optional[float] = None
+) -> Callable:
     """
     Check numeric value or string length lies within [min_val, max_val].
     For strings, checks length. For numbers, checks value.
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             if len(args) > pos:
                 val = args[pos]
                 if val is not None:
-                    # String -> check length
                     if isinstance(val, str):
                         length = len(val)
                         if min_val is not None and length < min_val:
@@ -50,7 +57,6 @@ def range_check(pos: int, min_val: Optional[float] = None, max_val: Optional[flo
                             raise ValueError(
                                 f"{func.__name__}: string length {length} > {max_val}"
                             )
-                    # Numeric -> check value
                     elif isinstance(val, (int, float)):
                         if min_val is not None and val < min_val:
                             raise ValueError(
@@ -61,12 +67,15 @@ def range_check(pos: int, min_val: Optional[float] = None, max_val: Optional[flo
                                 f"{func.__name__}: value {val} > {max_val}"
                             )
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def non_empty_check(pos: int) -> Callable:
     """Decorator to check string argument is not empty (after stripping)."""
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -77,12 +86,15 @@ def non_empty_check(pos: int) -> Callable:
                     logger.error(error_msg)
                     raise ValueError(error_msg)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def positive_check(pos: int) -> Callable:
-    """Decorator to check numeric argument is positive (>0)."""
+    """Decorator to check string argument is not empty (after stripping)."""
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -94,11 +106,12 @@ def positive_check(pos: int) -> Callable:
                         logger.error(error_msg)
                         raise ValueError(error_msg)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
-# For backward compatibility, keep arg_type as alias
 arg_type = type_check
 
 
@@ -168,19 +181,19 @@ class Tokenizer:
             if ch.isspace():
                 self.pos += 1
                 continue
-            if ch in "+-*/^()":
+            if ch in "+-*/^(),":  # 加入逗号
                 tokens.append(("OP", ch))
                 self.pos += 1
                 continue
             if ch.isdigit() or ch == ".":
-                match = re.match(r"\d+(\.\d*)?", self.text[self.pos:])
+                match = re.match(r"\d+(\.\d*)?", self.text[self.pos :])
                 if match:
                     val = match.group(0)
                     tokens.append(("NUM", val))
                     self.pos += len(val)
                     continue
             if ch.isalpha() or ch == "_":
-                match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", self.text[self.pos:])
+                match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", self.text[self.pos :])
                 if match:
                     val = match.group(0)
                     tokens.append(("NAME", val))
@@ -194,7 +207,9 @@ class Tokenizer:
 # 语法分析 把单词序列变成树
 class Parser:
     @type_check(1, list)
-    def __init__(self, tokens: list[tuple[str, str]], funcs: dict[str, Callable[..., Any]]) -> None:
+    def __init__(
+        self, tokens: list[tuple[str, str]], funcs: dict[str, Callable[..., Any]]
+    ) -> None:
         self.tokens = tokens
         self.pos = 0
         self.funcs = funcs
@@ -244,19 +259,28 @@ class Parser:
         return node
 
     def factor(self) -> Expr:
-        node = self.unary()
-        tok = self.peek()
-        if tok and tok[0] == "OP" and tok[1] == "^":
-            self.consume()
-            right = self.factor()
-            return Binary(node, "^", right)
+        # 左操作数允许一元负号（例如 -2^3）
+        node = self.unary(allow_unary_after_power=True)
+        while True:
+            tok = self.peek()
+            if tok and tok[0] == "OP" and tok[1] == "^":
+                self.consume()
+                # 指数部分禁止一元负号（例如 2^-3 必须加括号）
+                right = self.unary(allow_unary_after_power=False)
+                node = Binary(node, "^", right)
+            else:
+                break
         return node
 
-    def unary(self) -> Expr:
+    def unary(self, allow_unary_after_power: bool = True) -> Expr:
         tok = self.peek()
         if tok and tok[0] == "OP" and tok[1] == "-":
+            if not allow_unary_after_power:
+                raise SyntaxError(
+                    "Negative exponent must be parenthesized (e.g., 2^(-3))"
+                )
             self.consume()
-            operand = self.unary()
+            operand = self.unary(allow_unary_after_power)
             return Unary("-", operand)
         return self.primary()
 
@@ -333,7 +357,7 @@ class Evaluator:
                 raise ZeroDivisionError("Division by zero")
             return left / right
         if node.op == "^":
-            return left ** right
+            return left**right
         raise ValueError(f"Unknown operator: {node.op}")
 
     def visit_unary(self, node: Unary) -> Any:
@@ -384,7 +408,11 @@ class Visualizer:
         elif isinstance(node, Unary):
             label = f"u{node.op}"
         elif isinstance(node, Call):
-            label = "call"
+            # 显示函数名，lambda 显示为 λ
+            func_name = getattr(node.func, "__name__", "call")
+            if func_name == "<lambda>":
+                func_name = "λ"
+            label = func_name
         else:
             label = "node"
 
@@ -408,12 +436,11 @@ class Visualizer:
         self._visit(child, trace)
 
 
-# ---------- Public API with full AOP ----------
-# 拿去用的API
+# ---------- Public API with AOP ----------
 @type_check(0, str)
 @non_empty_check(0)
-@range_check(0, min_val=1, max_val=10000)          # restrict expression length
-@type_check(1, dict)                                # funcs must be dict or None
+@range_check(0, min_val=1, max_val=10000)  # restrict expression length
+@type_check(1, dict)  # funcs must be dict or None
 def parse(text: str, funcs: Optional[dict[str, Callable[..., Any]]] = None) -> Expr:
     funcs = funcs or {}
     tokenizer = Tokenizer(text)
@@ -423,7 +450,7 @@ def parse(text: str, funcs: Optional[dict[str, Callable[..., Any]]] = None) -> E
 
 
 @type_check(0, Expr)
-@type_check(1, dict)                                # env must be dict or None
+@type_check(1, dict)  # env must be dict or None
 def evaluate(node: Expr, env: Optional[dict[str, Any]] = None) -> Any:
     env = env or {}
     evaluator = Evaluator(env)
@@ -431,6 +458,6 @@ def evaluate(node: Expr, env: Optional[dict[str, Any]] = None) -> Any:
 
 
 @type_check(0, Expr)
-@type_check(1, dict)                                # trace must be dict or None
+@type_check(1, dict)  # trace must be dict or None
 def to_dot(node: Expr, trace: Optional[dict[int, Any]] = None) -> str:
     return Visualizer().visualize(node, trace)

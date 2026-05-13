@@ -1,35 +1,108 @@
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from typing import Any, Callable, Optional
 
 # ---------- Logging ----------
+# 日志
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("expr")
 
 
 # ---------- AOP decorators ----------
-def arg_type(
-    pos: int, expected: type
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+def type_check(pos: int, expected_type: type) -> Callable:
+    """Decorator to check argument type at given position."""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            if (
-                len(args) > pos
-                and args[pos] is not None
-                and not isinstance(args[pos], expected)
-            ):
-                raise TypeError(
-                    f"{func.__name__} arg {pos} expects "
-                    f"{expected.__name__}, got {type(args[pos]).__name__}"
-                )
+            if len(args) > pos and args[pos] is not None:
+                if not isinstance(args[pos], expected_type):
+                    error_msg = (f"{func.__name__} arg {pos} expects "
+                                 f"{expected_type.__name__}, got {type(args[pos]).__name__}")
+                    logger.error(error_msg)
+                    raise TypeError(error_msg)
             return func(*args, **kwargs)
         return wrapper
     return decorator
 
 
-# ---------- AST ----------
+def range_check(pos: int, min_val: Optional[float] = None, max_val: Optional[float] = None) -> Callable:
+    """
+    Check numeric value or string length lies within [min_val, max_val].
+    For strings, checks length. For numbers, checks value.
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if len(args) > pos:
+                val = args[pos]
+                if val is not None:
+                    # String -> check length
+                    if isinstance(val, str):
+                        length = len(val)
+                        if min_val is not None and length < min_val:
+                            raise ValueError(
+                                f"{func.__name__}: string length {length} < {min_val}"
+                            )
+                        if max_val is not None and length > max_val:
+                            raise ValueError(
+                                f"{func.__name__}: string length {length} > {max_val}"
+                            )
+                    # Numeric -> check value
+                    elif isinstance(val, (int, float)):
+                        if min_val is not None and val < min_val:
+                            raise ValueError(
+                                f"{func.__name__}: value {val} < {min_val}"
+                            )
+                        if max_val is not None and val > max_val:
+                            raise ValueError(
+                                f"{func.__name__}: value {val} > {max_val}"
+                            )
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def non_empty_check(pos: int) -> Callable:
+    """Decorator to check string argument is not empty (after stripping)."""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if len(args) > pos:
+                val = args[pos]
+                if isinstance(val, str) and val.strip() == "":
+                    error_msg = f"{func.__name__} arg {pos} must be a non-empty string"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def positive_check(pos: int) -> Callable:
+    """Decorator to check numeric argument is positive (>0)."""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if len(args) > pos:
+                val = args[pos]
+                if val is not None and isinstance(val, (int, float)):
+                    if val <= 0:
+                        error_msg = f"{func.__name__} arg {pos} value {val} must be > 0"
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+# For backward compatibility, keep arg_type as alias
+arg_type = type_check
+
+
+# ---------- AST 树节点 ----------
 class Expr:
     def accept(self, visitor: Evaluator) -> Any:
         raise NotImplementedError
@@ -80,8 +153,10 @@ class Call(Expr):
 
 
 # ---------- Tokenizer ----------
+# 词法分析 把字符串切成一个个单词
 class Tokenizer:
-    @arg_type(1, str)
+    @type_check(1, str)
+    @non_empty_check(1)
     def __init__(self, text: str) -> None:
         self.text = text
         self.pos = 0
@@ -105,28 +180,21 @@ class Tokenizer:
                     self.pos += len(val)
                     continue
             if ch.isalpha() or ch == "_":
-                match = re.match(
-                    r"[A-Za-z_][A-Za-z0-9_]*", self.text[self.pos:]
-                )
+                match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", self.text[self.pos:])
                 if match:
                     val = match.group(0)
                     tokens.append(("NAME", val))
                     self.pos += len(val)
                     continue
-            raise SyntaxError(
-                f"Unexpected character: {ch} at pos {self.pos}"
-            )
+            raise SyntaxError(f"Unexpected character: {ch} at pos {self.pos}")
         return tokens
 
 
 # ---------- Parser ----------
+# 语法分析 把单词序列变成树
 class Parser:
-    @arg_type(1, list)
-    def __init__(
-        self,
-        tokens: list[tuple[str, str]],
-        funcs: dict[str, Callable[..., Any]],
-    ) -> None:
+    @type_check(1, list)
+    def __init__(self, tokens: list[tuple[str, str]], funcs: dict[str, Callable[..., Any]]) -> None:
         self.tokens = tokens
         self.pos = 0
         self.funcs = funcs
@@ -136,25 +204,19 @@ class Parser:
             return self.tokens[self.pos]
         return None
 
-    def consume(
-        self, expected_type: Optional[str] = None
-    ) -> tuple[str, str]:
+    def consume(self, expected_type: Optional[str] = None) -> tuple[str, str]:
         tok = self.peek()
         if tok is None:
             raise SyntaxError("Unexpected end of input")
         if expected_type and tok[0] != expected_type:
-            raise SyntaxError(
-                f"Expected {expected_type}, got {tok[0]}"
-            )
+            raise SyntaxError(f"Expected {expected_type}, got {tok[0]}")
         self.pos += 1
         return tok
 
     def parse(self) -> Expr:
         node = self.expr()
         if self.peek() is not None:
-            raise SyntaxError(
-                "Unexpected token after end of expression"
-            )
+            raise SyntaxError("Unexpected token after end of expression")
         return node
 
     def expr(self) -> Expr:
@@ -217,11 +279,7 @@ class Parser:
                     args.append(self.expr())
                     while True:
                         nxt2 = self.peek()
-                        if (
-                            nxt2
-                            and nxt2[0] == "OP"
-                            and nxt2[1] == ","
-                        ):
+                        if nxt2 and nxt2[0] == "OP" and nxt2[1] == ",":
                             self.consume()  # ','
                             args.append(self.expr())
                         else:
@@ -240,8 +298,9 @@ class Parser:
 
 
 # ---------- Evaluator (Visitor) ----------
+# 求值器 遍历树计算结果
 class Evaluator:
-    @arg_type(1, dict)
+    @type_check(1, dict)
     def __init__(self, env: dict[str, Any]) -> None:
         self.env = env
         self.trace: dict[int, Any] = {}
@@ -285,11 +344,16 @@ class Evaluator:
 
     def visit_call(self, node: Call) -> Any:
         args = [self.evaluate(arg) for arg in node.args]
-        logger.debug("Calling with args: %s", args)
-        return node.func(*args)
+        logger.debug("Calling %s with args: %s", node.func.__name__, args)
+        try:
+            return node.func(*args)
+        except Exception as e:
+            logger.error("Error in function call: %s", e)
+            raise
 
 
 # ---------- Visualizer ----------
+# 可视化 输出 DOT 格式的图
 class Visualizer:
     def __init__(self) -> None:
         self.lines: list[str] = []
@@ -303,9 +367,7 @@ class Visualizer:
             self.counter += 1
         return self.ids[i]
 
-    def visualize(
-        self, node: Expr, trace: Optional[dict[int, Any]] = None
-    ) -> str:
+    def visualize(self, node: Expr, trace: Optional[dict[int, Any]] = None) -> str:
         self.lines = ["digraph G {"]
         self._visit(node, trace)
         self.lines.append("}")
@@ -340,20 +402,19 @@ class Visualizer:
             for arg in node.args:
                 self._edge(nid, arg, trace)
 
-    def _edge(
-        self, parent: str, child: Expr, trace: Optional[dict[int, Any]]
-    ) -> None:
+    def _edge(self, parent: str, child: Expr, trace: Optional[dict[int, Any]]) -> None:
         cid = self._nid(child)
         self.lines.append(f"{parent} -> {cid};")
         self._visit(child, trace)
 
 
-# ---------- Public API ----------
-@arg_type(0, str)
-def parse(
-    text: str,
-    funcs: Optional[dict[str, Callable[..., Any]]] = None,
-) -> Expr:
+# ---------- Public API with full AOP ----------
+# 拿去用的API
+@type_check(0, str)
+@non_empty_check(0)
+@range_check(0, min_val=1, max_val=10000)          # restrict expression length
+@type_check(1, dict)                                # funcs must be dict or None
+def parse(text: str, funcs: Optional[dict[str, Callable[..., Any]]] = None) -> Expr:
     funcs = funcs or {}
     tokenizer = Tokenizer(text)
     tokens = tokenizer.tokenize()
@@ -361,18 +422,15 @@ def parse(
     return parser.parse()
 
 
-@arg_type(0, Expr)
-@arg_type(1, dict)
-def evaluate(
-    node: Expr, env: Optional[dict[str, Any]] = None
-) -> Any:
+@type_check(0, Expr)
+@type_check(1, dict)                                # env must be dict or None
+def evaluate(node: Expr, env: Optional[dict[str, Any]] = None) -> Any:
     env = env or {}
     evaluator = Evaluator(env)
     return evaluator.evaluate(node)
 
 
-@arg_type(0, Expr)
-def to_dot(
-    node: Expr, trace: Optional[dict[int, Any]] = None
-) -> str:
+@type_check(0, Expr)
+@type_check(1, dict)                                # trace must be dict or None
+def to_dot(node: Expr, trace: Optional[dict[int, Any]] = None) -> str:
     return Visualizer().visualize(node, trace)

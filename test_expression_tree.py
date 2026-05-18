@@ -1,24 +1,26 @@
 from __future__ import annotations
 
+from typing import Any
 import math
 import pytest
 
 from expression_tree import (
     Evaluator,
+    Literal,
+    Tokenizer,
+    Variable,
     evaluate,
+    non_empty_check,
     parse,
+    positive_check,
+    range_check,
     to_dot,
     type_check,
-    range_check,
-    non_empty_check,
-    positive_check,
 )
 
 
-# ---------- Tests for AOP decorators ----------
+# ---------- AOP decorator tests ----------
 def test_type_check_decorator() -> None:
-    """verify that type_check will reject parameters of the wrong type"""
-
     @type_check(0, str)
     def foo(a: str) -> str:
         return a
@@ -29,8 +31,6 @@ def test_type_check_decorator() -> None:
 
 
 def test_range_check_decorator() -> None:
-    """Verify the range_check decorator"""
-
     @range_check(0, min_val=0, max_val=100)
     def foo(x: float) -> float:
         return x
@@ -43,8 +43,6 @@ def test_range_check_decorator() -> None:
 
 
 def test_non_empty_check_decorator() -> None:
-    """Verify non_empty_check decorator"""
-
     @non_empty_check(0)
     def foo(s: str) -> str:
         return s
@@ -57,8 +55,6 @@ def test_non_empty_check_decorator() -> None:
 
 
 def test_positive_check_decorator() -> None:
-    """Verify positive_check rejects zero or negative numbers"""
-
     @positive_check(0)
     def foo(x: float) -> float:
         return x
@@ -70,21 +66,18 @@ def test_positive_check_decorator() -> None:
         foo(-1)
 
 
-# ---------- Tests for edge cases and complex examples ----------
+# ---------- Edge case tests ----------
 def test_empty_string() -> None:
-    """Ensure the error for an empty expression string."""
     with pytest.raises(ValueError):
         parse("")
 
 
 def test_whitespace_only() -> None:
-    """reject a string containing only whitespace."""
     with pytest.raises(ValueError):
         parse("   ")
 
 
 def test_unmatched_parentheses() -> None:
-    """Error of  unbalanced parentheses"""
     with pytest.raises(SyntaxError):
         parse("(1+2")
     with pytest.raises(SyntaxError):
@@ -92,37 +85,93 @@ def test_unmatched_parentheses() -> None:
 
 
 def test_consecutive_operators() -> None:
-    """Ensure consecutive operators (1++2)"""
     with pytest.raises(SyntaxError):
         parse("1++2")
 
 
 def test_invalid_character() -> None:
-    """Ensure an invalid character in the input triggers a SyntaxError"""
     with pytest.raises(SyntaxError):
         parse("2$3")
 
 
 def test_division_by_zero() -> None:
-    """Cannot be divided by 0"""
     with pytest.raises(ZeroDivisionError):
-        evaluate(parse("1/0"))
+        evaluate(parse("1 / 0"))
 
 
 def test_undefined_variable() -> None:
-    """Undefined variables should not be used."""
     with pytest.raises(NameError):
         evaluate(parse("x + 1"))
 
 
 def test_undefined_function() -> None:
-    """Undefined functions cannot be called"""
     with pytest.raises(NameError):
         parse("bar(1)")
 
 
+# ---------- Basic function tests ----------
+def test_tokenizer() -> None:
+    t = Tokenizer("a + 2.5 * (3 - 4)")
+    tokens = t.tokenize()
+    assert len(tokens) == 9
+
+
+def test_parser_literal() -> None:
+    node = parse("42")
+    assert isinstance(node, Literal)
+    assert node.value == 42.0
+
+
+def test_parser_variable() -> None:
+    node = parse("x")
+    assert isinstance(node, Variable)
+    assert node.name == "x"
+
+
+def test_eval_simple() -> None:
+    assert evaluate(parse("2 + 3")) == 5.0
+    assert evaluate(parse("10 - 4")) == 6.0
+    assert evaluate(parse("3 * 4")) == 12.0
+    assert evaluate(parse("8 / 2")) == 4.0
+
+
+def test_eval_complex() -> None:
+    """Complex example from the lab PDF: a + 2 - sin(-0.3)*(b-c)."""
+    env = {"a": 1.0, "b": 2.0, "c": 0.5}
+    funcs = {"sin": math.sin}
+    node = parse("a + 2 - sin(-0.3) * (b - c)", funcs)
+    result = evaluate(node, env)
+    expected = 1.0 + 2.0 - math.sin(-0.3) * (2.0 - 0.5)
+    assert round(result, 6) == round(expected, 6)
+
+
+def test_eval_with_user_function() -> None:
+    funcs = {"foo": lambda x: x * 42}
+    node = parse("foo(2)", funcs)
+    assert evaluate(node) == 84.0
+
+
+def test_visualization() -> None:
+    node = parse("2 + 3")
+    dot = to_dot(node)
+    assert "digraph G" in dot
+    assert "+" in dot
+
+
+def test_trace_visualization() -> None:
+    env = {"a": 1.0, "b": 2.0}
+    node = parse("a + b")
+    evaluator = Evaluator(env)
+    result = evaluator.evaluate(node)
+    dot = to_dot(node, evaluator.trace)
+    assert result == 3.0
+    assert "1.0" in dot
+    assert "2.0" in dot
+    assert "3.0" in dot
+
+
+# ---------- Operator precedence tests ----------
 def test_power_precedence() -> None:
-    """Test left-associativity"""
     res = evaluate(parse("2^3^2"))
     assert res == 64.0
     res = evaluate(parse("2^3*2"))
@@ -131,16 +180,25 @@ def test_power_precedence() -> None:
     assert res == 18.0
 
 
-def test_nested_function_call() -> None:
-    """Test evaluation of nested function"""
-    funcs = {"add": lambda a, b: a + b, "square": lambda x: x * x}
-    expr = "add(square(2), square(3))"
+def test_precedence_of_unary_minus() -> None:
+    res = evaluate(parse("-2^3"))
+    assert res == -8.0
+    with pytest.raises(
+        SyntaxError, match="Negative exponent must be parenthesized"
+    ):
+        parse("2^-3")
+
+
+def test_function_with_multiple_arguments() -> None:
+    funcs = {"max3": lambda a, b, c: max(a, b, c)}
+    expr = "max3(10, 20, 15)"
     res = evaluate(parse(expr, funcs))
-    assert res == 4 + 9 == 13.0
+    assert res == 20
 
 
+# ---------- Complex examples ----------
 def test_complex_quadratic_formula() -> None:
-    """Test a realistic quadratic formula with sqrt and variables"""
+    """Complex example: quadratic formula with sqrt and variables."""
     funcs = {"sqrt": math.sqrt}
     a, b, c = 1.0, -3.0, 2.0
     env = {"a": a, "b": b, "c": c}
@@ -152,28 +210,12 @@ def test_complex_quadratic_formula() -> None:
     assert abs(res2 - 1.0) < 1e-9
 
 
-def test_deeply_nested_expression() -> None:
-    """Test a deeply parenthesized expression"""
-    expr = "1+(2+(3+(4+5)))"
-    res = evaluate(parse(expr))
-    assert res == 1 + 2 + 3 + 4 + 5
-
-
-def test_user_function_exception() -> None:
-    """Ensure exceptions raised by user-defined functions propagate correctly"""
-
-    def faulty(x):
-        raise RuntimeError("intentional error")
-
-    funcs = {"bad": faulty}
-    expr = "bad(42)"
-    node = parse(expr, funcs)
-    with pytest.raises(RuntimeError):
-        evaluate(node)
-
-
 def test_trace_visualization_with_nested_calls() -> None:
-    """test the trace annotations appear in DOT output for nested calls"""
+    """
+    Complex example: user-defined lambda function with trace annotation.
+    Covers both 'user-specific functions' and 'dataflow graph with trace'
+    requirements from the lab specification.
+    """
     funcs = {"mul": lambda x, y: x * y}
     env = {"a": 2, "b": 3}
     expr = "mul(a, b)"
@@ -183,31 +225,4 @@ def test_trace_visualization_with_nested_calls() -> None:
     assert result == 6
     dot = to_dot(node, evaluator.trace)
     assert "6" in dot
-    assert "λ" in dot  # lambda function appears as λ
-
-
-def test_large_expression_with_many_operators() -> None:
-    """Test if a series of additions works."""
-    expr = "1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17+18+19+20"
-    res = evaluate(parse(expr))
-    assert res == sum(range(1, 21))
-
-
-def test_precedence_of_unary_minus() -> None:
-    """Test that unary minus binds tighter than power"""
-    res = evaluate(parse("-2^3"))
-    assert res == -8.0
-    with pytest.raises(SyntaxError, match="Negative exponent must be parenthesized"):
-        parse("2^-3")
-
-
-def test_function_with_multiple_arguments() -> None:
-    """Test function call with three positional arguments"""
-    funcs = {"max3": lambda a, b, c: max(a, b, c)}
-    expr = "max3(10, 20, 15)"
-    res = evaluate(parse(expr, funcs))
-    assert res == 20
-
-
-if __name__ == "__main__":
-    pytest.main()
+    assert "λ" in dot

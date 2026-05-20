@@ -8,9 +8,9 @@ from typing import Any, Callable, Optional
 
 import matplotlib
 matplotlib.use("Agg")  # noqa: E402
-
 import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.patches as patches  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.DEBUG)
@@ -542,7 +542,7 @@ def visualize_png(
     trace: Optional[dict[int, Any]] = None,
     path: Optional[str] = None,
     figsize: tuple[float, float] = (8, 5),
-) -> plt.Figure:
+) -> Figure:
     """Draw expression tree as PNG image using matplotlib."""
     trace = trace or {}
     layout = _Layout()
@@ -628,7 +628,7 @@ def evaluate_steps_png(
     node: Expr,
     env: Optional[dict[str, Any]] = None,
     out_dir: str = "evaluation_steps",
-) -> list[tuple[Expr, Any, str]]:
+) -> list[tuple[Expr, Any, Figure]]:
     """Evaluate step by step, generating a PNG image at each step."""
     os.makedirs(out_dir, exist_ok=True)
     env = env or {}

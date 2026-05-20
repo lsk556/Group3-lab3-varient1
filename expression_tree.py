@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import re
 from typing import Any, Callable, Optional
+
+import matplotlib
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.DEBUG)
@@ -229,6 +236,14 @@ class Tokenizer:
             )
         return tokens
 
+    def tokens_table(self) -> str:
+        """Return a markdown table of tokens."""
+        tokens = self.tokenize()
+        lines = ["| Token | Value |", "|-------|-------|"]
+        for kind, val in tokens:
+            lines.append(f"| {kind} | `{val}` |")
+        return "\n".join(lines)
+
 
 # ---------- Parser ----------
 class Parser:
@@ -413,7 +428,7 @@ class Evaluator:
             raise
 
 
-# ---------- Visualizer ----------
+# ---------- Legacy Visualizer (DOT output, kept for compatibility) ----------
 class Visualizer:
     def __init__(self) -> None:
         self.lines: list[str] = []
@@ -475,6 +490,195 @@ class Visualizer:
         self._visit(child, trace)
 
 
+# ---------- Matplotlib PNG Visualizer ----------
+class _Layout:
+    def __init__(self) -> None:
+        self.pos: dict[int, tuple[float, float, str]] = {}
+        self._counter = 0.0
+
+    def _traverse(self, node: Optional[Expr], depth: int = 0) -> None:
+        if node is None:
+            return
+        if isinstance(node, Binary):
+            self._traverse(node.left, depth + 1)
+            label = self._label(node)
+            self.pos[id(node)] = (self._counter, -depth, label)
+            self._counter += 1.2
+            self._traverse(node.right, depth + 1)
+        elif isinstance(node, Unary):
+            self._traverse(node.operand, depth + 1)
+            label = self._label(node)
+            self.pos[id(node)] = (self._counter, -depth, label)
+            self._counter += 1.2
+        elif isinstance(node, Call):
+            for arg in node.args:
+                self._traverse(arg, depth + 1)
+            label = self._label(node)
+            self.pos[id(node)] = (self._counter, -depth, label)
+            self._counter += 1.2
+        else:
+            # Literal, Variable
+            label = self._label(node)
+            self.pos[id(node)] = (self._counter, -depth, label)
+            self._counter += 1.2
+
+    def _label(self, node: Expr) -> str:
+        if isinstance(node, Literal):
+            return f"{node.value}"
+        if isinstance(node, Variable):
+            return f"var:{node.name}"
+        if isinstance(node, Binary):
+            return node.op
+        if isinstance(node, Unary):
+            return f"u{node.op}"
+        if isinstance(node, Call):
+            fn = getattr(node.func, "__name__", "call")
+            return "λ" if fn == "<lambda>" else fn
+        return "node"
+
+
+def visualize_png(
+    node: Expr,
+    trace: Optional[dict[int, Any]] = None,
+    path: Optional[str] = None,
+    figsize: tuple[float, float] = (8, 5),
+) -> plt.Figure:
+    """Draw expression tree as PNG image using matplotlib."""
+    trace = trace or {}
+    layout = _Layout()
+    layout._traverse(node)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    if not layout.pos:
+        ax.text(0.5, 0.5, "Empty", ha="center", va="center")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+        if path:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+        return fig
+
+    xs = [p[0] for p in layout.pos.values()]
+    ys = [p[1] for p in layout.pos.values()]
+    ax.set_xlim(min(xs) - 0.8, max(xs) + 0.8)
+    ax.set_ylim(min(ys) - 1.0, max(ys) + 1.0)
+    ax.axis("off")
+
+    def _edges(n: Optional[Expr]) -> None:
+        if n is None or not isinstance(n, (Binary, Unary, Call)):
+            return
+        px, py, _ = layout.pos[id(n)]
+        children: list[Expr] = []
+        if isinstance(n, Binary):
+            children = [n.left, n.right]
+        elif isinstance(n, Unary):
+            children = [n.operand]
+        elif isinstance(n, Call):
+            children = n.args
+        for child in children:
+            if child is not None and id(child) in layout.pos:
+                cx, cy, _ = layout.pos[id(child)]
+                ax.plot([px, cx], [py - 0.3, cy + 0.3], "k-", lw=1.5)
+                _edges(child)
+
+    _edges(node)
+
+    for nid, (x, y, label) in layout.pos.items():
+        val = trace.get(nid)
+        display = f"{label}\n= {val}" if val is not None else label
+        color = "#c8e6c9" if val is not None else "#e3f2fd"
+        edge = "#2e7d32" if val is not None else "#1565c0"
+
+        box = patches.FancyBboxPatch(
+            (x - 0.45, y - 0.3), 0.9, 0.6,
+            boxstyle="round,pad=0.05",
+            facecolor=color,
+            edgecolor=edge,
+            lw=2,
+        )
+        ax.add_patch(box)
+        ax.text(
+            x, y, display, ha="center", va="center",
+            fontsize=11, weight="bold",
+        )
+
+    plt.tight_layout()
+    if path:
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+    return fig
+
+
+# ---------- Step-by-step evaluation with PNG ----------
+def _postorder(node: Expr) -> list[Expr]:
+    """Return nodes in post-order (leaves to root)."""
+    result: list[Expr] = []
+    if isinstance(node, Binary):
+        result.extend(_postorder(node.left))
+        result.extend(_postorder(node.right))
+    elif isinstance(node, Unary):
+        result.extend(_postorder(node.operand))
+    elif isinstance(node, Call):
+        for arg in node.args:
+            result.extend(_postorder(arg))
+    result.append(node)
+    return result
+
+
+def evaluate_steps_png(
+    node: Expr,
+    env: Optional[dict[str, Any]] = None,
+    out_dir: str = "evaluation_steps",
+) -> list[tuple[Expr, Any, str]]:
+    """Evaluate step by step, generating a PNG image at each step."""
+    os.makedirs(out_dir, exist_ok=True)
+    env = env or {}
+    evaluator = Evaluator(env)
+    steps: list[tuple[Expr, Any, str]] = []
+    for i, n in enumerate(_postorder(node), start=1):
+        result = evaluator.evaluate(n)
+        path = os.path.join(out_dir, f"step{i:02d}.png")
+        visualize_png(node, evaluator.trace, path=path)
+        steps.append((n, result, path))
+    return steps
+
+
+def explain_computation_png(
+    text: str,
+    env: Optional[dict[str, Any]] = None,
+    funcs: Optional[dict[str, Callable[..., Any]]] = None,
+    out_dir: str = "evaluation_steps",
+) -> dict[str, Any]:
+    """
+    Full pipeline: tokenize -> parse -> evaluate step by step.
+    Generates artifacts for each phase.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Phase 1: Tokenize
+    tokenizer = Tokenizer(text)
+    tokens = tokenizer.tokenize()
+    with open(
+        os.path.join(out_dir, "01_tokens.md"), "w", encoding="utf-8"
+    ) as f:
+        f.write(f"# Tokens for: `{text}`\n\n")
+        f.write(tokenizer.tokens_table())
+
+    # Phase 2: Parse (AST)
+    parser = Parser(tokens, funcs or {})
+    ast = parser.parse()
+    visualize_png(ast, path=os.path.join(out_dir, "02_ast.png"))
+
+    # Phase 3: Evaluate step by step
+    steps = evaluate_steps_png(ast, env, out_dir)
+
+    return {
+        "tokens": tokens,
+        "ast": ast,
+        "steps": steps,
+        "final_result": steps[-1][1] if steps else None,
+    }
+
+
 # ---------- Public API with AOP ----------
 @type_check(0, str)
 @non_empty_check(0)
@@ -505,4 +709,5 @@ def evaluate(
 def to_dot(
     node: Expr, trace: Optional[dict[int, Any]] = None
 ) -> str:
+    """Legacy DOT output (kept for compatibility)."""
     return Visualizer().visualize(node, trace)

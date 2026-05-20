@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import math
+import os
+
+import matplotlib
+matplotlib.use("Agg")
 
 import pytest
 
@@ -10,12 +14,15 @@ from expression_tree import (
     Tokenizer,
     Variable,
     evaluate,
+    evaluate_steps_png,
+    explain_computation_png,
     non_empty_check,
     parse,
     positive_check,
     range_check,
     to_dot,
     type_check,
+    visualize_png, Binary,
 )
 
 
@@ -216,3 +223,52 @@ def test_trace_visualization_with_nested_calls() -> None:
     dot = to_dot(node, evaluator.trace)
     assert "6" in dot
     assert "λ" in dot
+
+
+# ---------- Step-by-step PNG tests ----------
+def test_visualize_png_generates_file() -> None:
+    """PNG is generated directly in project directory."""
+    node = parse("2 + 3")
+    path = "test_output/test_ast.png"
+    os.makedirs("test_output", exist_ok=True)
+    visualize_png(node, path=path)
+    assert os.path.exists(path)
+
+
+def test_step_by_step_png() -> None:
+    """Step-by-step evaluation produces one PNG per step."""
+    node = parse("2 + 3")
+    steps = evaluate_steps_png(node, out_dir="evaluation_steps")
+
+    assert len(steps) == 3
+    for _, _, path in steps:
+        assert os.path.exists(path)
+        assert path.endswith(".png")
+
+    # Verify step contents
+    n1, r1, _ = steps[0]
+    assert isinstance(n1, Literal)
+    assert r1 == 2.0
+
+    n3, r3, _ = steps[2]
+    assert isinstance(n3, Binary)
+    assert r3 == 5.0
+
+
+def test_full_pipeline_png() -> None:
+    """Full pipeline generates tokens, AST, and step PNGs."""
+    text = "a + 2 - sin(-0.3) * (b - c)"
+    env = {"a": 1.0, "b": 2.0, "c": 0.5}
+    funcs = {"sin": math.sin}
+
+    result = explain_computation_png(text, env, funcs)
+
+    assert result["final_result"] is not None
+    assert os.path.exists("evaluation_steps/01_tokens.md")
+    assert os.path.exists("evaluation_steps/02_ast.png")
+
+    # Assert all evaluation step images exist
+    steps = result["steps"]
+    assert len(steps) == 11
+    for i in range(1, len(steps) + 1):
+        assert os.path.exists(f"evaluation_steps/step{i:02d}.png")

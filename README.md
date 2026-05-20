@@ -45,6 +45,12 @@ using an expression tree representation.
 - Adjusted code style and README format
 - Passed all CI checks
 
+### 20.05.2026 — Lin Shengkai
+
+- Added step-by-step computation visualization using matplotlib
+- Generated PNG images for each evaluation step (tokenize, AST,
+  intermediate results, final output)
+
 ## Design Notes
 
 - **Visitor pattern** — Keeps evaluation logic separate from AST nodes,

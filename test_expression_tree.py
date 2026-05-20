@@ -4,11 +4,11 @@ import math
 import os
 
 import matplotlib
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
-from expression_tree import (
+from expression_tree import (  # noqa: E402
     Evaluator,
     Literal,
     Tokenizer,

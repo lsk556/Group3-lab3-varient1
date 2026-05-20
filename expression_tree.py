@@ -7,10 +7,10 @@ import re
 from typing import Any, Callable, Optional
 
 import matplotlib
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # noqa: E402
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.patches as patches  # noqa: E402
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.DEBUG)

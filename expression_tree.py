@@ -139,9 +139,6 @@ def positive_check(
     return decorator
 
 
-arg_type = type_check
-
-
 # ---------- AST ----------
 class Expr:
     def accept(self, visitor: Evaluator) -> Any:

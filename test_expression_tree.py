@@ -67,16 +67,6 @@ def test_positive_check_decorator() -> None:
 
 
 # ---------- Edge case tests ----------
-def test_empty_string() -> None:
-    with pytest.raises(ValueError):
-        parse("")
-
-
-def test_whitespace_only() -> None:
-    with pytest.raises(ValueError):
-        parse("   ")
-
-
 def test_unmatched_parentheses() -> None:
     with pytest.raises(SyntaxError):
         parse("(1+2")

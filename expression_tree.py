@@ -628,7 +628,7 @@ def evaluate_steps_png(
     node: Expr,
     env: Optional[dict[str, Any]] = None,
     out_dir: str = "evaluation_steps",
-) -> list[tuple[Expr, Any, Figure]]:
+) -> list[tuple[Expr, Any, str]]:
     """Evaluate step by step, generating a PNG image at each step."""
     os.makedirs(out_dir, exist_ok=True)
     env = env or {}

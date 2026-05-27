@@ -662,6 +662,7 @@ def explain_computation_png(
     ) as f:
         f.write(f"# Tokens for: `{text}`\n\n")
         f.write(tokenizer.tokens_table())
+        f.write("\n")
 
     # Phase 2: Parse (AST)
     parser = Parser(tokens, funcs or {})

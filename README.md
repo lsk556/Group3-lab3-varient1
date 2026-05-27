@@ -66,3 +66,84 @@ using an expression tree representation.
 - **Error handling** — Syntax errors, division by zero, undefined
   variables/functions, and user exceptions are caught with detailed
   messages.
+
+## Step-by-step Computation Example
+
+The following figures illustrate the computational process for the
+expression `a + 2 - sin(-0.3) * (b - c)` with environment
+`{a: 1.0, b: 2.0, c: 0.5}`.
+
+---
+
+### Phase 1 — Abstract Syntax Tree (before evaluation)
+
+![Initial AST](evaluation_steps/02_ast.png)
+
+---
+
+### Phase 2 — Step-by-step evaluation (leaves to root)
+
+**Step 1:** Variable `a` is resolved to `1.0`.
+
+![Step 1](evaluation_steps/step01.png)
+
+---
+
+**Step 2:** Literal `2.0` is evaluated.
+
+![Step 2](evaluation_steps/step02.png)
+
+---
+
+**Step 3:** Binary `+` computes `1.0 + 2.0 = 3.0`.
+
+![Step 3](evaluation_steps/step03.png)
+
+---
+
+**Step 4:** Literal `0.3` is evaluated.
+
+![Step 4](evaluation_steps/step04.png)
+
+---
+
+**Step 5:** Unary `-` computes `-0.3`.
+
+![Step 5](evaluation_steps/step05.png)
+
+---
+
+**Step 6:** Function `sin(-0.3)` returns `-0.2955...`.
+
+![Step 6](evaluation_steps/step06.png)
+
+---
+
+**Step 7:** Variable `b` is resolved to `2.0`.
+
+![Step 7](evaluation_steps/step07.png)
+
+---
+
+**Step 8:** Variable `c` is resolved to `0.5`.
+
+![Step 8](evaluation_steps/step08.png)
+
+---
+
+**Step 9:** Binary `-` computes `2.0 - 0.5 = 1.5`.
+
+![Step 9](evaluation_steps/step09.png)
+
+---
+
+**Step 10:** Binary `*` computes `-0.2955... * 1.5 = -0.4432...`.
+
+![Step 10](evaluation_steps/step10.png)
+
+---
+
+**Step 11:** Binary `-` computes `3.0 - (-0.4432...) = 3.4432...`
+(final result).
+
+![Step 11 — Final result](evaluation_steps/step11.png)
